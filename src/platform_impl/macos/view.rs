@@ -265,10 +265,20 @@ static VIEW_CLASS: LazyLock<ViewClass> = LazyLock::new(|| unsafe {
 
 extern "C" fn dealloc(this: &Object, _sel: Sel) {
   unsafe {
+    // A notification centre does not retain its observers, so the frame notice
+    // registered in `initWithTao` would outlive this object and call back into
+    // `frameDidChange:` with a freed `taoState`.
+    let notification_center: &Object = msg_send![class!(NSNotificationCenter), defaultCenter];
+    let _: () = msg_send![notification_center, removeObserver: this];
     let state: *mut c_void = *this.get_ivar("taoState");
     let marked_text: *mut NSMutableAttributedString = *this.get_ivar("markedText");
     let _: () = msg_send![marked_text, release];
     drop(Box::from_raw(state as *mut ViewState));
+    // `NSView`'s own teardown has to run: it lifts the view off its window and
+    // tells Text Services the input client is gone. Skipping it leaves the view
+    // half alive with an input method session attached to a freed document,
+    // which traps on the next application activation.
+    let _: () = msg_send![super(this, class!(NSView)), dealloc];
   }
 }
 
